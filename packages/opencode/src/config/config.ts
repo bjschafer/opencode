@@ -43,6 +43,9 @@ import { Npm } from "@opencode-ai/core/npm"
 
 const log = Log.create({ service: "config" })
 
+const decodeJsonUnknown = Schema.decodeUnknownOption(Schema.UnknownFromJsonString)
+const decodePermissionInfo = Schema.decodeUnknownOption(ConfigPermission.Info)
+
 // Custom merge function that concatenates array fields instead of replacing them
 // Keep remeda's deep conditional merge type out of hot config-loading paths; TS profiling showed it dominates here.
 function mergeConfig(target: Info, source: Info): Info {
@@ -703,7 +706,15 @@ export const layer = Layer.effect(
         }
 
         if (Flag.OPENCODE_PERMISSION) {
-          result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.OPENCODE_PERMISSION))
+          // OPENCODE_PERMISSION is user-supplied JSON from an env var; validate
+          // it against the permission schema instead of trusting JSON.parse so
+          // malformed input warns rather than crashing startup.
+          const decoded = Option.flatMap(decodeJsonUnknown(Flag.OPENCODE_PERMISSION), decodePermissionInfo)
+          if (Option.isSome(decoded)) {
+            result.permission = mergeDeep(result.permission ?? {}, decoded.value)
+          } else {
+            log.warn("ignoring invalid OPENCODE_PERMISSION", { value: Flag.OPENCODE_PERMISSION })
+          }
         }
 
         if (result.tools) {
